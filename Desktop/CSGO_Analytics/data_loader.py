@@ -3,18 +3,13 @@ import pandas as pd
 import os
 import streamlit as st
 
-# ── Pfad-Konfiguration ────────────────────────────────────────────────────────
 BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 PROCESSED_DIR = os.path.join(BASE_DIR, "processed")
-MAPS_DIR      = os.path.join(BASE_DIR, "maps")
 MAP_DATA_CSV  = os.path.join(BASE_DIR, "map_data.csv")
 HEATMAP_DIR   = os.path.join(PROCESSED_DIR, "heatmaps")
 
-# ── Hugging Face Config ───────────────────────────────────────────────────────
-HF_DATASET  = "HeadShottt/CS-GO"
-HF_BASE_URL = f"https://huggingface.co/datasets/{HF_DATASET}/resolve/main"
+HF_DATASET = "HeadShottt/CS-GO"
 
-# All files to download from HF if not present locally
 HF_FILES = [
     "dmg.parquet",
     "grenades.parquet",
@@ -38,30 +33,9 @@ PARQUET_FILES = {
 }
 
 
-def _download_file(relative_path: str, status_text) -> bool:
-    """Download a single file from Hugging Face if not present locally."""
-    local_path = os.path.join(PROCESSED_DIR, relative_path)
-    if os.path.exists(local_path):
-        return True
-
-    os.makedirs(os.path.dirname(local_path), exist_ok=True)
-    url = f"{HF_BASE_URL}/{relative_path}"
-    try:
-        import urllib.request
-        urllib.request.urlretrieve(url, local_path)
-        return True
-    except Exception as e:
-        st.warning(f"Could not download {relative_path}: {e}")
-        return False
-
-
 @st.cache_resource(show_spinner=False)
 def ensure_data_files():
-    """
-    Check all required parquet files exist locally.
-    Download missing ones from Hugging Face.
-    Cached — only runs once per session.
-    """
+    from huggingface_hub import hf_hub_download
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     os.makedirs(HEATMAP_DIR, exist_ok=True)
 
@@ -72,10 +46,20 @@ def ensure_data_files():
         return True
 
     total = len(missing)
-    bar   = st.progress(0, text=f"Downloading data (0/{total})...")
+    bar = st.progress(0, text=f"Downloading data (0/{total})...")
     for i, f in enumerate(missing):
-        bar.progress((i + 1) / total, text=f"⬇️  {f}  ({i+1}/{total})")
-        _download_file(f, f)
+        bar.progress((i + 1) / total, text=f"⬇️ {f} ({i+1}/{total})")
+        local_path = os.path.join(PROCESSED_DIR, f)
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        try:
+            hf_hub_download(
+                repo_id=HF_DATASET,
+                filename=f,
+                repo_type="dataset",
+                local_dir=PROCESSED_DIR,
+            )
+        except Exception as e:
+            st.warning(f"Could not download {f}: {e}")
     bar.empty()
     return True
 
@@ -85,8 +69,7 @@ class DataLoader:
         self.con = duckdb.connect(database=":memory:")
 
     def _load_parquet_group(self, key: str) -> pd.DataFrame:
-        files = PARQUET_FILES[key]
-        paths = [os.path.join(PROCESSED_DIR, f) for f in files
+        paths = [os.path.join(PROCESSED_DIR, f) for f in PARQUET_FILES[key]
                  if os.path.exists(os.path.join(PROCESSED_DIR, f))]
         if not paths:
             st.warning(f"No files found for '{key}'")
