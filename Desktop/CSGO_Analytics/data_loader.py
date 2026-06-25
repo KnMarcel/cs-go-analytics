@@ -52,6 +52,7 @@ def ensure_data_files():
         try:
             hf_hub_download(
                 repo_id=HF_DATASET,
+                token=os.environ.get("HF_TOKEN"),
                 filename=f,
                 repo_type="dataset",
                 local_dir=PROCESSED_DIR,
