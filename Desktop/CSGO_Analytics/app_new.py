@@ -125,6 +125,7 @@ from tabs import tab_mapmeta
 # ── Load data ─────────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="Initialisiere DuckDB & lade Parquet...")
 def load():
+    ensure_data_files()
     return DataLoader().load_all()
 
 data = load()
