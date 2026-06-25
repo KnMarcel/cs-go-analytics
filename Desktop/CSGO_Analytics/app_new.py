@@ -144,7 +144,7 @@ map_data = data["map_data"]
 available_maps = sorted(map_data["map"].tolist()) if not map_data.empty else []
 
 with h2:
-    chosen_map = st.selectbox("", available_maps,
+    chosen_map = st.selectbox("Map", available_maps,
                               label_visibility="collapsed", key="global_map")
 
 st.markdown("<hr style='border-color:#1e2d40;margin:6px 0 10px 0'>", unsafe_allow_html=True)
