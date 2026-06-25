@@ -26,20 +26,11 @@ HF_FILES = [
     "heatmaps/de_train.parquet",
 ]
 
-PARQUET_FILES = {
-    "dmg":      ["dmg.parquet"],
-    "grenades": ["grenades.parquet"],
-    "kills":    ["kills.parquet"],
-    "meta":     ["meta.parquet"],
-}
-
-# Only load columns used by the dashboard — reduces RAM by ~70%
-COLUMNS = {
-    "dmg": "file, round, seconds, att_side, hp_dmg, arm_dmg, hitbox, wp, wp_type, att_pos_x, att_pos_y, vic_pos_x, vic_pos_y",
-    "grenades": "file, round, seconds, att_side, vic_side, hp_dmg, arm_dmg, nade, att_pos_x, att_pos_y, nade_land_x, nade_land_y",
-    "kills": "file, round, seconds, att_side, vic_side, wp, wp_type, ct_alive, t_alive",
-    "meta": "file, map, round, start_seconds, end_seconds, winner_side, round_type, ct_eq_val, t_eq_val",
-}
+# Only columns used by the dashboard
+DMG_COLS      = "file, round, seconds, att_side, hp_dmg, arm_dmg, hitbox, wp, wp_type, att_pos_x, att_pos_y, vic_pos_x, vic_pos_y"
+GRENADES_COLS = "file, round, seconds, att_side, vic_side, hp_dmg, arm_dmg, nade, att_pos_x, att_pos_y, nade_land_x, nade_land_y"
+KILLS_COLS    = "file, round, seconds, att_side, vic_side, wp, wp_type, ct_alive, t_alive"
+META_COLS     = "file, map, round, start_seconds, end_seconds, winner_side, round_type, ct_eq_val, t_eq_val"
 
 
 @st.cache_resource(show_spinner=False)
@@ -71,77 +62,113 @@ def ensure_data_files():
     return True
 
 
-# ── Alles unten ist identisch mit der Original-Version ───────────────────────
-
 class DataLoader:
     def __init__(self):
         self.con = duckdb.connect(database=":memory:")
+        self._meta = None
+        self._map_data = None
 
-    def _load_parquet_group(self, key: str) -> pd.DataFrame:
-        files = PARQUET_FILES[key]
-        paths = []
-        for f in files:
-            full = os.path.join(PROCESSED_DIR, f)
-            if os.path.exists(full):
-                paths.append(full)
-            else:
-                st.warning(f"⚠️ Datei nicht gefunden: {full}")
+    def _path(self, filename):
+        return os.path.join(PROCESSED_DIR, filename)
 
-        if not paths:
-            st.warning(f"⚠️ Keine Dateien für '{key}' gefunden. Gesucht in: {PROCESSED_DIR}")
-            return pd.DataFrame()
-
-        path_list = ", ".join([f"'{p}'" for p in paths])
-        cols = COLUMNS.get(key, "*")
-        query = f"SELECT {cols} FROM read_parquet([{path_list}])"
-        return self.con.execute(query).df()
+    def _load_meta(self) -> pd.DataFrame:
+        """Load meta once — it's small (6MB) and needed for map list + file lookup."""
+        if self._meta is not None:
+            return self._meta
+        p = self._path("meta.parquet")
+        self._meta = self.con.execute(
+            f"SELECT {META_COLS} FROM read_parquet('{p}')"
+        ).df()
+        return self._meta
 
     def _load_map_data(self) -> pd.DataFrame:
+        if self._map_data is not None:
+            return self._map_data
         if os.path.exists(MAP_DATA_CSV):
             df = pd.read_csv(MAP_DATA_CSV, index_col=0)
             df.index.name = "map"
-            return df.reset_index()
-        alt_parquet = os.path.join(PROCESSED_DIR, "map_data.parquet")
-        if os.path.exists(alt_parquet):
-            df = self.con.execute(f"SELECT * FROM read_parquet('{alt_parquet}')").df()
+            self._map_data = df.reset_index()
+            return self._map_data
+        alt = self._path("map_data.parquet")
+        if os.path.exists(alt):
+            df = self.con.execute(f"SELECT * FROM read_parquet('{alt}')").df()
             if "column0" in df.columns:
                 df = df.rename(columns={"column0": "map"})
-            return df
-        alt_csv = os.path.join(PROCESSED_DIR, "map_data.csv")
-        if os.path.exists(alt_csv):
-            df = pd.read_csv(alt_csv, index_col=0)
-            df.index.name = "map"
-            return df.reset_index()
-        st.warning("⚠️ map_data.csv nicht gefunden!")
+            self._map_data = df
+            return self._map_data
+        st.warning("⚠️ map_data not found!")
         return pd.DataFrame(columns=["map","StartX","StartY","EndX","EndY","ResX","ResY"])
 
+    @st.cache_data(show_spinner=False)
+    def load_for_map(_self, chosen_map: str) -> dict:
+        """
+        Load only the rows for the selected map.
+        Uses DuckDB JOIN to filter at read time — never loads full 10M row tables.
+        RAM usage: ~150-300MB instead of ~3GB.
+        """
+        meta     = _self._load_meta()
+        map_data = _self._load_map_data()
+
+        # Get file list for this map
+        map_files = meta[meta["map"] == chosen_map]["file"].unique().tolist()
+        if not map_files:
+            st.warning(f"No data found for map: {chosen_map}")
+            return {"dmg": pd.DataFrame(), "grenades": pd.DataFrame(),
+                    "kills": pd.DataFrame(), "meta": pd.DataFrame(),
+                    "map_data": map_data}
+
+        # Build SQL IN clause
+        file_list = ", ".join([f"'{f}'" for f in map_files])
+
+        dmg_path      = _self._path("dmg.parquet")
+        grenades_path = _self._path("grenades.parquet")
+        kills_path    = _self._path("kills.parquet")
+
+        dmg = _self.con.execute(
+            f"SELECT {DMG_COLS} FROM read_parquet('{dmg_path}') WHERE file IN ({file_list})"
+        ).df()
+
+        grenades = _self.con.execute(
+            f"SELECT {GRENADES_COLS} FROM read_parquet('{grenades_path}') WHERE file IN ({file_list})"
+        ).df()
+
+        kills = _self.con.execute(
+            f"SELECT {KILLS_COLS} FROM read_parquet('{kills_path}') WHERE file IN ({file_list})"
+        ).df()
+
+        meta_map = meta[meta["map"] == chosen_map].copy()
+
+        # Add map column
+        dmg["map"]      = chosen_map
+        grenades["map"] = chosen_map
+        kills["map"]    = chosen_map
+
+        return {
+            "dmg":      dmg,
+            "grenades": grenades,
+            "kills":    kills,
+            "meta":     meta_map,
+            "map_data": map_data,
+        }
+
     def load_all(self) -> dict:
+        """
+        Returns lightweight dict with meta + map_data only.
+        Full data is loaded per-map via load_for_map().
+        """
         try:
-            dmg      = self._load_parquet_group("dmg")
-            grenades = self._load_parquet_group("grenades")
-            kills    = self._load_parquet_group("kills")
-            meta     = self._load_parquet_group("meta")
+            meta     = self._load_meta()
             map_data = self._load_map_data()
-
-            if not meta.empty and "map" in meta.columns and "file" in meta.columns:
-                file_map = meta[["file","map"]].drop_duplicates()
-                if not kills.empty and "map" not in kills.columns and "file" in kills.columns:
-                    kills = kills.merge(file_map, on="file", how="left")
-                if not dmg.empty and "map" not in dmg.columns and "file" in dmg.columns:
-                    dmg = dmg.merge(file_map, on="file", how="left")
-                if not grenades.empty and "map" not in grenades.columns and "file" in grenades.columns:
-                    grenades = grenades.merge(file_map, on="file", how="left")
-
             return {
-                "dmg":      dmg,
-                "grenades": grenades,
-                "kills":    kills,
+                "dmg":      pd.DataFrame(),  # loaded per map
+                "grenades": pd.DataFrame(),  # loaded per map
+                "kills":    pd.DataFrame(),  # loaded per map
                 "meta":     meta,
                 "map_data": map_data,
+                "_loader":  self,            # pass loader for per-map loading
             }
-
         except Exception as e:
-            st.error(f"Fehler beim Laden der Daten: {e}")
+            st.error(f"Error loading data: {e}")
             import traceback
             st.code(traceback.format_exc())
             return None

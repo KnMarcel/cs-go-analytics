@@ -119,13 +119,12 @@ section[data-testid="stSidebar"] { display:none; }
 </style>
 """, unsafe_allow_html=True)
 
-from data_loader import DataLoader, ensure_data_files
+from data_loader import DataLoader
 from tabs import tab_mapmeta
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-@st.cache_resource(show_spinner="Loading data...")
+@st.cache_resource(show_spinner="Initialisiere DuckDB & lade Parquet...")
 def load():
-    ensure_data_files()  # download from HF if not local
     return DataLoader().load_all()
 
 data = load()
@@ -150,4 +149,11 @@ with h2:
 st.markdown("<hr style='border-color:#1e2d40;margin:6px 0 10px 0'>", unsafe_allow_html=True)
 
 # ── Render single dashboard ───────────────────────────────────────────────────
-tab_mapmeta.render(data, chosen_map)
+# Load data for selected map only (RAM efficient)
+loader = data.get("_loader")
+if loader:
+    map_data_full = loader.load_for_map(chosen_map)
+else:
+    map_data_full = data
+map_data_full["map_data"] = data["map_data"]
+tab_mapmeta.render(map_data_full, chosen_map)
