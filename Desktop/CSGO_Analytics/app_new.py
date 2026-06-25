@@ -119,7 +119,7 @@ section[data-testid="stSidebar"] { display:none; }
 </style>
 """, unsafe_allow_html=True)
 
-from data_loader import DataLoader
+from data_loader import DataLoader, ensure_data_files
 from tabs import tab_mapmeta
 
 # ── Load data ─────────────────────────────────────────────────────────────────
