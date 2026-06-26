@@ -145,19 +145,20 @@ map_data = data["map_data"]
 available_maps = sorted(map_data["map"].tolist()) if not map_data.empty else []
 
 with h2:
-    chosen_map = st.selectbox("", available_maps,
+    chosen_map = st.selectbox("Map", available_maps,
                               label_visibility="collapsed", key="global_map")
 
 st.markdown("<hr style='border-color:#1e2d40;margin:6px 0 10px 0'>", unsafe_allow_html=True)
 
 # ── Render single dashboard ───────────────────────────────────────────────────
 from data_loader import load_map_data
-map_tables = load_map_data(chosen_map)
-data_for_map = {
-    "dmg":      map_tables.get("dmg",      pd.DataFrame()),
-    "grenades": map_tables.get("grenades", pd.DataFrame()),
-    "kills":    map_tables.get("kills",    pd.DataFrame()),
-    "meta":     data["meta"][data["meta"]["map"] == chosen_map],
-    "map_data": data["map_data"],
-}
-tab_mapmeta.render(data_for_map, chosen_map)
+if chosen_map:
+    map_tables = load_map_data(chosen_map)
+    data_for_map = {
+        "dmg":      map_tables.get("dmg",      pd.DataFrame()),
+        "grenades": map_tables.get("grenades", pd.DataFrame()),
+        "kills":    map_tables.get("kills",    pd.DataFrame()),
+        "meta":     data["meta"][data["meta"]["map"] == chosen_map],
+        "map_data": data["map_data"],
+    }
+    tab_mapmeta.render(data_for_map, chosen_map)
