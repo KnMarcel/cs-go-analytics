@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 
 st.set_page_config(
     page_title="CS:GO Map Meta",
@@ -119,13 +120,12 @@ section[data-testid="stSidebar"] { display:none; }
 </style>
 """, unsafe_allow_html=True)
 
-from data_loader import DataLoader, ensure_data_files
+from data_loader import DataLoader
 from tabs import tab_mapmeta
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="Initialisiere DuckDB & lade Parquet...")
 def load():
-    ensure_data_files()
     return DataLoader().load_all()
 
 data = load()
@@ -144,17 +144,19 @@ map_data = data["map_data"]
 available_maps = sorted(map_data["map"].tolist()) if not map_data.empty else []
 
 with h2:
-    chosen_map = st.selectbox("Map", available_maps,
+    chosen_map = st.selectbox("", available_maps,
                               label_visibility="collapsed", key="global_map")
 
 st.markdown("<hr style='border-color:#1e2d40;margin:6px 0 10px 0'>", unsafe_allow_html=True)
 
 # ── Render single dashboard ───────────────────────────────────────────────────
-# Load data for selected map only (RAM efficient)
-loader = data.get("_loader")
-if loader:
-    map_data_full = loader.load_for_map(chosen_map)
-else:
-    map_data_full = data
-map_data_full["map_data"] = data["map_data"]
-tab_mapmeta.render(map_data_full, chosen_map)
+from data_loader import load_map_data
+map_tables = load_map_data(chosen_map)
+data_for_map = {
+    "dmg":      map_tables.get("dmg",      pd.DataFrame()),
+    "grenades": map_tables.get("grenades", pd.DataFrame()),
+    "kills":    map_tables.get("kills",    pd.DataFrame()),
+    "meta":     data["meta"][data["meta"]["map"] == chosen_map],
+    "map_data": data["map_data"],
+}
+tab_mapmeta.render(data_for_map, chosen_map)
